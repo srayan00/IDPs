@@ -138,14 +138,10 @@ def compare_proteins_domain(directory, domain_info):
     i = 0
     for _, group in unique_combos:
         if len(group) > 1:
-            write_chain_list(directory, chain_list = list(group.index), filename = "chain_list_{}".format(i))
-            compare_proteins_dir(directory, chain_list = "chain_list_{}".format(i), output_file = "TMalign_output_{}.txt".format(i))
+            write_chain_list(directory, chain_list = [x.lower() + ".cif" for x in list(group.index)], filename = "chain_list_{}".format(i))
+            compare_proteins_dir(directory, chain_list = "chain_list_{}".format(i), output_file = "TMalign_raw_output_{}.txt".format(i))
             clean_TMalign_output(directory, raw_file = "TMalign_raw_output_{}.txt".format(i), clean_file = "TMalign_output_{}.csv".format(i))
             i += 1
-    # return "DONE"
-    # unique_combos = domain_info.groupby(list_of_domains).size().reset_index().rename(columns={0:'count'})
-    # unique_combos = unique_combos[unique_combos["count"] > 1]
-# .reset_index().rename(columns={0:'count'})
 
 
 if __name__ == "__main__":
@@ -183,11 +179,13 @@ if __name__ == "__main__":
     #     # Clean TMalign output
     #     clean_TMalign_output(uniprot_path)
     
+    ## This is how you do it the strategic way.
 
     # Find Uniprot data
     uniprot_json = find_uniprot(uniprot_df, "CBPG_PSES6")
     domain_info = get_domain_info_for_pdbs(uniprot_json, scop_df)
-    print(compare_proteins_domain("/nfs/turbo/lsa-tewaria/uniprot/CBPG_PSES6", domain_info))
+    uniprot_path, zipped_status = uniprot_to_pdb("CHEY_ECOLI", uniprot_df, zipped_status)
+    compare_proteins_domain("/nfs/turbo/lsa-tewaria/uniprot/CBPG_PSES6", domain_info)
     
 
     # # Move PDBs to Uniprot folders
