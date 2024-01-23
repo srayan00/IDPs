@@ -5,6 +5,7 @@ import sys
 import gzip
 import shutil
 import json
+import re
 
 """
 Okay! 
@@ -24,11 +25,26 @@ residue boundaries. We can check the domain stuff here too using Scop?? (trying 
 ENLYS_BPT4 has been the example protein so far. 
 """
 
+def read_scop_file(filepath = "/nfs/turbo/lsa-tewaria/scop-cla-latest.txt"):
+    scop_df = pd.read_csv(filepath, sep = " ", skiprows = 5)
+    new_col_names = list(scop_df.columns)[1:]
+    new_col_names.append("def")
+    scop_df.columns = new_col_names
+    scop_df.drop("def", axis = 1, inplace = True)
+    return scop_df
+
 def find_uniprot(df, uniprot_id):
     test = df[df["uniprot_id"] == uniprot_id]["to"]
-    s = test.values[0].replace("\'", '\"')
-    print(s[-100:])
-    y = json.loads(s)
+    s = test.values[0]
+
+    split_s = s.split("\"")
+    split_s[0::2] = [x.replace("\'", '\"') for x in split_s[0::2]]
+    # split_s[1::2] = [x.replace("\'", '') for x in split_s[1::2]]
+    s = "\"".join(split_s)
+    s = s.replace(": False", ": \"False\"")
+    s = s.replace(": True", ": \"True\"")
+
+    y = json.loads(r"{}".format(s))
     return y
 
 def unzip_cif_folder(directory):
@@ -80,8 +96,14 @@ def clean_TMalign_output(directory):
     tmalign_output["Uniprot_ID"] = uniprot_id
     tmalign_output.to_csv(os.path.join(directory, uniprot_id + "_TMalign_output.csv"))
 
-def get_domain_boundaries(uniprot_id):
+def get_domain_boundaries(json_file, scop_file):
+    uniprot_id = json_file["primaryAccession"]
+    uniprot_scop_file = scop_file[scop_file["FA-UNIID"] == uniprot_id]
+    return uniprot_scop_file["FA-UNIREG"]
+
+def get_residue_boundaries(json_file, scop_file):
     pass
+    
 
 
 if __name__ == "__main__":
@@ -98,9 +120,13 @@ if __name__ == "__main__":
     uniprot_pdb_path = "/nfs/turbo/lsa-tewaria/uniprot_df_small.csv"
     uniprot_df = pd.read_csv(uniprot_pdb_path)
 
+    # Load Scop data
+    scop_df = read_scop_file()
+    print(scop_df.head())
 
     # Get Unique Uniprot IDs
     uniprot_ids = uniprot_df["uniprot_id"].unique()
+
 
     
     # for uniprot_id in uniprot_ids:
@@ -118,17 +144,20 @@ if __name__ == "__main__":
     
 
     # Find Uniprot data
-    uniprot_json = find_uniprot(uniprot_df, "ENLYS_BPT4")
+    uniprot_json = find_uniprot(uniprot_df, "CHEY_ECOLI")
+    print(get_domain_boundaries(uniprot_json, scop_df))
+    sample = [x for x in uniprot_json["uniProtKBCrossReferences"] if x["database"] == "PDB"]
+    print(sample[:][["id", "properties"]])
 
-    # Move PDBs to Uniprot folders
-    uniprot_path, zipped_status = uniprot_to_pdb("ENLYS_BPT4", uniprot_df, zipped_status)
+    # # Move PDBs to Uniprot folders
+    # uniprot_path, zipped_status = uniprot_to_pdb("CHEY_ECOLI", uniprot_df, zipped_status)
 
-    # Compare proteins in Uniprot folder
-    compare_proteins_dir(uniprot_path)
+    # # Compare proteins in Uniprot folder
+    # compare_proteins_dir(uniprot_path)
 
-    # Clean TMalign output
-    clean_TMalign_output(uniprot_path)
+    # # Clean TMalign output
+    # clean_TMalign_output(uniprot_path)
 
-    # Save zipped status
-    zipped_status.to_csv(zipped_status_path)
+    # # Save zipped status
+    # zipped_status.to_csv(zipped_status_path)
     
