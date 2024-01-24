@@ -25,6 +25,15 @@ residue boundaries. We can check the domain stuff here too using Scop?? (trying 
 ENLYS_BPT4 has been the example protein so far. 
 """
 
+def read_zipped_status(filepath = "/nfs/turbo/lsa-tewaria/zipped_status.csv"):
+    if not os.path.exists(filepath):
+        list_mmcifs = os.listdir("/nfs/turbo/lsa-tewaria/mmCIF/")
+        zipped_status = pd.DataFrame({"status" : [True for i in range(len(list_mmcifs))]}, index = list_mmcifs)
+        zipped_status.to_csv(filepath)
+    else:
+        zipped_status = pd.read_csv(filepath, index_col = 0)
+    return zipped_status
+
 def read_scop_file(filepath = "/nfs/turbo/lsa-tewaria/scop-cla-latest.txt"):
     scop_df = pd.read_csv(filepath, sep = " ", skiprows = 5)
     new_col_names = list(scop_df.columns)[1:]
@@ -145,14 +154,9 @@ def compare_proteins_domain(directory, domain_info):
 
 
 if __name__ == "__main__":
-    # Zip status
+    # Read Zipped status
     zipped_status_path = "/nfs/turbo/lsa-tewaria/zipped_status.csv"
-    if not os.path.exists(zipped_status_path):
-        list_mmcifs = os.listdir("/nfs/turbo/lsa-tewaria/mmCIF/")
-        zipped_status = pd.DataFrame({"status" : [True for i in range(len(list_mmcifs))]}, index = list_mmcifs)
-        zipped_status.to_csv(zipped_status_path)
-    else:
-        zipped_status = pd.read_csv(zipped_status_path, index_col = 0)
+    zipped_status = read_zipped_status(zipped_status_path)
     
     # Load dataframe PDBs to Uniprot
     uniprot_pdb_path = "/nfs/turbo/lsa-tewaria/uniprot_df_small.csv"
