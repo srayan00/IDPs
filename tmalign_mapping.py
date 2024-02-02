@@ -194,7 +194,7 @@ if __name__ == "__main__":
     # Find Uniprot data
     uniprot_json = find_uniprot(uniprot_df, "CBPG_PSES6")
     domain_info = get_domain_info_for_pdbs(uniprot_json, scop_df)
-    uniprot_path, zipped_status = uniprot_to_pdb("CHEY_ECOLI", uniprot_df, zipped_status)
+    uniprot_path, zipped_status = uniprot_to_pdb("CBPG_PSES6", uniprot_df, zipped_status)
     compare_proteins_domain("/nfs/turbo/lsa-tewaria/uniprot/CBPG_PSES6", domain_info)
     
 
