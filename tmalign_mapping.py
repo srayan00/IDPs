@@ -25,6 +25,12 @@ residue boundaries. We can check the domain stuff here too using Scop?? (trying 
 ENLYS_BPT4 has been the example protein so far. 
 """
 
+"""
+POST MEETING STUFF
+TODOS
+1) 
+"""
+
 def read_zipped_status(filepath = "/nfs/turbo/lsa-tewaria/zipped_status.csv"):
     if not os.path.exists(filepath):
         list_mmcifs = os.listdir("/nfs/turbo/lsa-tewaria/mmCIF/")
