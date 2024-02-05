@@ -28,7 +28,9 @@ ENLYS_BPT4 has been the example protein so far.
 """
 POST MEETING STUFF
 TODOS
-1) 
+1) When I compare two proteins, I want to first make sure the sequences are aligned correctly using NWAlign
+2) Then I want to delete the unnecessary/misaligned parts of the structure
+3) Then I want to compare the structures using TMScore 
 """
 
 def read_zipped_status(filepath = "/nfs/turbo/lsa-tewaria/zipped_status.csv"):
@@ -39,6 +41,15 @@ def read_zipped_status(filepath = "/nfs/turbo/lsa-tewaria/zipped_status.csv"):
     else:
         zipped_status = pd.read_csv(filepath, index_col = 0)
     return zipped_status
+
+def read_zipped_status_efficient(filepath = "/nfs/turbo/lsa-tewaria/zipped_status_efficient.csv", uniprot_ids = None):
+    if not os.path.exists(filepath):
+        zipped_status = pd.DataFrame({"status" : [True for i in range(len(uniprot_ids))]}, index = uniprot_ids)
+        zipped_status.to_csv(filepath)
+    else:
+        zipped_status = pd.read_csv(filepath, index_col = 0)
+    return zipped_status
+
 
 def read_scop_file(filepath = "/nfs/turbo/lsa-tewaria/scop-cla-latest.txt"):
     scop_df = pd.read_csv(filepath, sep = " ", skiprows = 5)
@@ -71,6 +82,7 @@ def unzip_cif_folder(directory):
                     shutil.copyfileobj(f_in, f_out)
 
 
+
 def write_chain_list(directory, chain_list = None, filename = "chain_list"):
     with open(directory + "/" + filename, "w") as f:
         if chain_list is None:
@@ -97,6 +109,20 @@ def uniprot_to_pdb(uniprot_id, uniprot_df, zip_status, write = True):
     if write:
         write_chain_list(uniprot_path)
     return uniprot_path, zip_status
+
+def uniprot_to_pdb_efficient(uniprot_id, uniprot_df, write = True):
+    uniprot_path = os.path.join("/nfs/turbo/lsa-tewaria/uniprot/", uniprot_id)
+    mmcif_path = os.path.join("/nfs/turbo/lsa-tewaria/", "mmCIF")
+    if not os.path.exists(uniprot_path):
+        os.mkdir(uniprot_path)
+    uniprot_pdb_ids = uniprot_df[uniprot_df["uniprot_id"] == uniprot_id]["from"]
+    for pdb_id in uniprot_pdb_ids:
+        pdb_dir_path = os.path.join(mmcif_path, pdb_id[1:3])
+        pdb_path = os.path.join(pdb_dir_path, pdb_id + ".cif.gz")
+        shutil.copy(pdb_path, uniprot_path)
+    if write:
+        write_chain_list(uniprot_path)
+    return uniprot_path  
 
 
 def compare_two_proteins(directory, protein_1, protein_2):
@@ -158,6 +184,18 @@ def compare_proteins_domain(directory, domain_info):
             clean_TMalign_output(directory, raw_file = "TMalign_raw_output_{}.txt".format(i), clean_file = "TMalign_output_{}.csv".format(i))
             i += 1
 
+def compare_proteins_domain_efficient(directory, domain_info):
+    unzip_cif_folder(directory)
+    list_of_domains = list(domain_info.columns[3:])
+    unique_combos = domain_info.groupby(list_of_domains)
+    i = 0
+    for _, group in unique_combos:
+        if len(group) > 1:
+            write_chain_list(directory, chain_list = [x.lower() + ".cif" for x in list(group.index)], filename = "chain_list_{}".format(i))
+            compare_proteins_dir(directory, chain_list = "chain_list_{}".format(i), output_file = "TMalign_raw_output_{}.txt".format(i))
+            clean_TMalign_output(directory, raw_file = "TMalign_raw_output_{}.txt".format(i), clean_file = "TMalign_output_{}.csv".format(i))
+            i += 1
+
 
 if __name__ == "__main__":
     # Read Zipped status
@@ -179,16 +217,14 @@ if __name__ == "__main__":
     # for uniprot_id in uniprot_ids:
     #     # Find Uniprot data
     #     uniprot_json = find_uniprot(uniprot_df, uniprot_id)
+    #     domain_info = get_domain_info_for_pdbs(uniprot_json, scop_df)
 
     #     # Move PDBs to Uniprot folders
-    #     uniprot_path, zipped_status = uniprot_to_pdb(uniprot_id, uniprot_df, zipped_status)
+    #     uniprot_path = uniprot_to_pdb_effecient(uniprot_id, uniprot_df)
 
     #     # Compare proteins in Uniprot folder
-    #     compare_proteins_dir(uniprot_path)
+    #     compare_proteins_domain_efficient(uniprot_path, domain_info)
 
-    #     # Clean TMalign output
-    #     clean_TMalign_output(uniprot_path)
-    
     ## This is how you do it the strategic way.
 
     # Find Uniprot data
