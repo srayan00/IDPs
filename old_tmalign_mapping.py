@@ -6,6 +6,7 @@ import gzip
 import shutil
 import json
 import re
+from tmalign_mapping import *
 
 def read_zipped_status(filepath = "/nfs/turbo/lsa-tewaria/zipped_status.csv"):
     if not os.path.exists(filepath):
@@ -15,24 +16,6 @@ def read_zipped_status(filepath = "/nfs/turbo/lsa-tewaria/zipped_status.csv"):
     else:
         zipped_status = pd.read_csv(filepath, index_col = 0)
     return zipped_status
-
-def write_chain_list(directory, chain_list = None, filename = "chain_list"):
-    with open(directory + "/" + filename, "w") as f:
-        if chain_list is None:
-            for filename in os.listdir(directory):
-                if filename.endswith(".cif"):
-                    f.write(filename + "\n")
-        else:
-            for chain in chain_list:
-                f.write(chain + "\n")
-
-def unzip_cif_folder(directory):
-    for filename in os.listdir(directory):
-        if filename.endswith(".gz"):
-            filename_new = os.path.join(directory, filename)
-            with gzip.open(filename_new, 'rb') as f_in:
-                with open(filename_new[:-3], 'wb') as f_out:
-                    shutil.copyfileobj(f_in, f_out)
 
 def uniprot_to_pdb(uniprot_id, uniprot_df, zip_status, write = True):
     uniprot_path = os.path.join("/nfs/turbo/lsa-tewaria/uniprot/", uniprot_id)
@@ -50,21 +33,6 @@ def uniprot_to_pdb(uniprot_id, uniprot_df, zip_status, write = True):
     if write:
         write_chain_list(uniprot_path)
     return uniprot_path, zip_status
-
-def compare_proteins_dir(directory, chain_list = "chain_list", output_file = "TMalign_output.txt"):
-    terminal_command = "./TMalign -dir " + directory + "/ " + directory + "/" + chain_list + " -outfmt 2 > " + directory + "/" + output_file
-    os.system(terminal_command)
-
-def clean_TMalign_output(directory, raw_file = "TMalign_raw_output.txt", clean_file = None):
-    tmalign_output = pd.read_csv(os.path.join(directory, raw_file), sep = "\t", skipfooter = 1)
-    tmalign_output["Chain_1"] = tmalign_output["#PDBchain1"].apply(lambda x: x.split("/")[-1].split(".")[0])
-    tmalign_output["Chain_2"] = tmalign_output["PDBchain2"].apply(lambda x: x.split("/")[-1].split(".")[0])
-    uniprot_id = directory.split("/")[-1]
-    tmalign_output["Uniprot_ID"] = uniprot_id
-    if clean_file is None:
-        tmalign_output.to_csv(os.path.join(directory, uniprot_id + "_TMalign_output.csv"))
-    else:
-        tmalign_output.to_csv(os.path.join(directory, clean_file))
 
 def compare_proteins_domain(directory, domain_info):
     list_of_domains = list(domain_info.columns[3:])

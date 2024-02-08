@@ -6,6 +6,9 @@ import gzip
 import shutil
 import json
 import re
+import argparse
+import Bio.PDB as bpdb
+from Bio import Align
 
 """
 Okay! 
@@ -33,13 +36,29 @@ TODOS
 3) Then I want to compare the structures using TMScore 
 """
 
-def read_zipped_status_efficient(filepath = "/nfs/turbo/lsa-tewaria/zipped_status_efficient.csv", uniprot_ids = None):
+parser = argparse.ArgumentParser()
+parser.add_argument('--uniprotID', default='BIOD_MYCTU', type=str,
+                    help='Uniprot ID for protein you want to compare')
+parser.add_argument('--naive', default= 0, type=int,
+                    help='Naive approach or not')
+parser.add_argument("--testing_phase", default = 1, type = int,
+                    help = "Testing phase or not")
+
+def read_zipped_status(filepath = "/nfs/turbo/lsa-tewaria/zipped_status_efficient.csv", uniprot_ids = None):
     if not os.path.exists(filepath):
         zipped_status = pd.DataFrame({"status" : [True for i in range(len(uniprot_ids))]}, index = uniprot_ids)
         zipped_status.to_csv(filepath)
     else:
         zipped_status = pd.read_csv(filepath, index_col = 0)
     return zipped_status
+
+def initialize_aligner():
+    aligner = Align.PairwiseAligner()
+    aligner.mode = 'local' # does this need to be global?
+    aligner.open_gap_score = -11
+    aligner.extend_gap_score = -1
+    aligner.substitution_matrix = Align.substitution_matrices.load("BLOSUM62")
+    return aligner
 
 
 def read_scop_file(filepath = "/nfs/turbo/lsa-tewaria/scop-cla-latest.txt"):
@@ -64,6 +83,9 @@ def find_uniprot(df, uniprot_id):
     y = json.loads(r"{}".format(s))
     return y
 
+def extract_sequence(json_file):
+    return json_file["sequence"]["value"]
+
 def unzip_cif_folder(directory):
     for filename in os.listdir(directory):
         if filename.endswith(".gz"):
@@ -86,7 +108,7 @@ def write_chain_list(directory, chain_list = None, filename = "chain_list"):
 
 
 
-def uniprot_to_pdb_efficient(uniprot_id, uniprot_df, write = True):
+def uniprot_to_pdb(uniprot_id, uniprot_df, write = True):
     uniprot_path = os.path.join("/nfs/turbo/lsa-tewaria/uniprot/", uniprot_id)
     mmcif_path = os.path.join("/nfs/turbo/lsa-tewaria/", "mmCIF")
     if not os.path.exists(uniprot_path):
@@ -101,6 +123,46 @@ def uniprot_to_pdb_efficient(uniprot_id, uniprot_df, write = True):
     unzip_cif_folder(uniprot_path)
     return uniprot_path  
 
+def get_true_residue_boundaries(seq1, seq2, aligner):
+    alignment = aligner.align(seq1, seq2)
+    start_1 = alignment[0].aligned[0][0][0]
+    end_1 = alignment[0].aligned[0][0][1]
+    if start_1 > 0:
+        print(start_1, end_1)
+        return -1, -1
+    start_2 = alignment[0].aligned[1][0][0]
+    end_2 = alignment[0].aligned[1][0][1]
+    return start_2, end_2
+
+
+def split_pdb_structure(uniprot_id, json_file):
+    uniprot_path = os.path.join("/nfs/turbo/lsa-tewaria/uniprot/", uniprot_id)
+    main_seq = extract_sequence(json_file)
+    aligner = initialize_aligner()
+    residue_boundaries = {"name" : [], "start" : [], "end" : []}
+    for pdb_id in os.listdir(uniprot_path):
+        if not pdb_id.endswith(".cif"):
+            continue
+        pdb_path = os.path.join(uniprot_path, pdb_id)
+        pdb = bpdb.MMCIFParser().get_structure(pdb_id, pdb_path)
+        for model in pdb:
+            polypeptides = bpdb.PPBuilder().build_peptides(model)
+            for chain, pp in zip(model, polypeptides):
+                model_id = str(model.get_id())
+                chain_id = str(chain.get_id())
+                name_of_chain = pdb_id[:-4] + "_"+ model_id + chain_id
+                chain_path = os.path.join(uniprot_path, name_of_chain + ".pdb")
+                start, end = get_true_residue_boundaries(pp.get_sequence(), main_seq, aligner)
+                if start != -1:
+                    io = bpdb.PDBIO()
+                    io.set_structure(chain)
+                    io.save(chain_path)
+                    residue_boundaries["name"].append(name_of_chain)
+                    residue_boundaries["start"].append(start)
+                    residue_boundaries["end"].append(end)
+                else:
+                    print("Could not align {} and {}".format(name_of_chain, uniprot_id))
+    return pd.DataFrame(residue_boundaries)
 
 def compare_two_proteins(directory, protein_1, protein_2):
     terminal_command = "./TMalign " + directory + "/" + protein_1 + ".cif " + directory + "/" + protein_2 + ".cif"
@@ -143,6 +205,8 @@ def get_residue_boundaries(json_file):
     return domain_boundaries
 
 
+
+
 def get_domain_info_for_pdbs(json_file, scop_file):
     domain_boundaries = get_domain_boundaries(json_file, scop_file)
     residue_boundaries = get_residue_boundaries(json_file)
@@ -152,7 +216,7 @@ def get_domain_info_for_pdbs(json_file, scop_file):
         residue_boundaries["d_{}".format(x)] = ((residue_boundaries["domain_start"] <= min(dom_start)) & (residue_boundaries["domain_end"] >= max(dom_end)))
     return residue_boundaries
 
-def compare_proteins_domain_efficient(directory, domain_info):
+def compare_proteins_domain(directory, domain_info):
     list_of_domains = list(domain_info.columns[3:])
     unique_combos = domain_info.groupby(list_of_domains)
     i = 0
@@ -166,47 +230,51 @@ def compare_proteins_domain_efficient(directory, domain_info):
 
 
 if __name__ == "__main__":
+
+    args, unknown = parser.parse_known_args()
+    uniprot_id = args.uniprotID
+    naive = args.naive
+    testing_phase = args.testing_phase
+
     # Load dataframe PDBs to Uniprot
-    uniprot_pdb_path = "/nfs/turbo/lsa-tewaria/uniprot_df_small.csv"
+    if testing_phase:
+        uniprot_pdb_path = "/nfs/turbo/lsa-tewaria/uniprot_df_small.csv"
+    else:
+        uniprot_pdb_path = "/nfs/turbo/lsa-tewaria/uniprot_df_2.csv"
     uniprot_df = pd.read_csv(uniprot_pdb_path)
 
     # Load Scop data
     scop_df = read_scop_file()
 
-    # Get Unique Uniprot IDs
-    uniprot_ids = uniprot_df["uniprot_id"].unique()[0]
-
-
+    if uniprot_id == "all":
+        # Get Unique Uniprot IDs
+        uniprot_ids = uniprot_df["uniprot_id"].unique()
     
-    # for uniprot_id in uniprot_ids:
-    #     # Find Uniprot data
-    #     uniprot_json = find_uniprot(uniprot_df, uniprot_id)
-    #     domain_info = get_domain_info_for_pdbs(uniprot_json, scop_df)
+        for uniprot_id in uniprot_ids:
+            # Find Uniprot data
+            uniprot_json = find_uniprot(uniprot_df, uniprot_id)
 
-    #     # Move PDBs to Uniprot folders
-    #     uniprot_path = uniprot_to_pdb_effecient(uniprot_id, uniprot_df)
+            # Get the domain info for the proteins
+            domain_info = get_domain_info_for_pdbs(uniprot_json, scop_df)
 
-    #     # Compare proteins in Uniprot folder
-    #     compare_proteins_domain_efficient(uniprot_path, domain_info)
+            # Move zipped cif files from pdb to uniprot folder
+            uniprot_path = uniprot_to_pdb(uniprot_id, uniprot_df)
 
-    ## This is how you do it the strategic way.
+            # Compare proteins in Uniprot folder
+            if not naive:
+                compare_proteins_domain(uniprot_path, domain_info)
+            else:
+                compare_proteins_dir(uniprot_path)
+    else:
+        uniprot_json = find_uniprot(uniprot_df, uniprot_id)
+        domain_info = get_domain_info_for_pdbs(uniprot_json, scop_df)
+        uniprot_path = uniprot_to_pdb(uniprot_id, uniprot_df)
 
-    # Find Uniprot data
-    uniprot_json = find_uniprot(uniprot_df, "BIOD_MYCTU")
-    domain_info = get_domain_info_for_pdbs(uniprot_json, scop_df)
-    uniprot_path = uniprot_to_pdb_efficient("BIOD_MYCTU", uniprot_df)
-    compare_proteins_domain_efficient("/nfs/turbo/lsa-tewaria/uniprot/BIOD_MYCTU", domain_info)
-    
+        # Split the pdb structure by (entity, chain)
+        residue_bounds = split_pdb_structure(uniprot_id, uniprot_json)
+        print(residue_bounds)
+        if not naive:
+            compare_proteins_domain(uniprot_path, domain_info)
+        else:
+            compare_proteins_dir(uniprot_path)
 
-    # # Move PDBs to Uniprot folders
-    # uniprot_path, zipped_status = uniprot_to_pdb("CHEY_ECOLI", uniprot_df, zipped_status)
-
-    # # Compare proteins in Uniprot folder
-    # compare_proteins_dir(uniprot_path)
-
-    # # Clean TMalign output
-    # clean_TMalign_output(uniprot_path)
-
-    # # Save zipped status
-    # zipped_status.to_csv(zipped_status_path)
-    
