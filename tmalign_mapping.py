@@ -33,15 +33,6 @@ TODOS
 3) Then I want to compare the structures using TMScore 
 """
 
-def read_zipped_status(filepath = "/nfs/turbo/lsa-tewaria/zipped_status.csv"):
-    if not os.path.exists(filepath):
-        list_mmcifs = os.listdir("/nfs/turbo/lsa-tewaria/mmCIF/")
-        zipped_status = pd.DataFrame({"status" : [True for i in range(len(list_mmcifs))]}, index = list_mmcifs)
-        zipped_status.to_csv(filepath)
-    else:
-        zipped_status = pd.read_csv(filepath, index_col = 0)
-    return zipped_status
-
 def read_zipped_status_efficient(filepath = "/nfs/turbo/lsa-tewaria/zipped_status_efficient.csv", uniprot_ids = None):
     if not os.path.exists(filepath):
         zipped_status = pd.DataFrame({"status" : [True for i in range(len(uniprot_ids))]}, index = uniprot_ids)
@@ -93,22 +84,7 @@ def write_chain_list(directory, chain_list = None, filename = "chain_list"):
             for chain in chain_list:
                 f.write(chain + "\n")
 
-def uniprot_to_pdb(uniprot_id, uniprot_df, zip_status, write = True):
-    uniprot_path = os.path.join("/nfs/turbo/lsa-tewaria/uniprot/", uniprot_id)
-    mmcif_path = os.path.join("/nfs/turbo/lsa-tewaria/", "mmCIF")
-    if not os.path.exists(uniprot_path):
-        os.mkdir(uniprot_path)
-    uniprot_pdb_ids = uniprot_df[uniprot_df["uniprot_id"] == uniprot_id]["from"]
-    for pdb_id in uniprot_pdb_ids:
-        pdb_dir_path = os.path.join(mmcif_path, pdb_id[1:3])
-        if zip_status["status"][pdb_id[1:3]]:
-            unzip_cif_folder(pdb_dir_path)
-            zip_status["status"][pdb_id[1:3]] = False
-        pdb_path = os.path.join(pdb_dir_path, pdb_id + ".cif")
-        shutil.copy(pdb_path, uniprot_path)
-    if write:
-        write_chain_list(uniprot_path)
-    return uniprot_path, zip_status
+
 
 def uniprot_to_pdb_efficient(uniprot_id, uniprot_df, write = True):
     uniprot_path = os.path.join("/nfs/turbo/lsa-tewaria/uniprot/", uniprot_id)
@@ -122,6 +98,7 @@ def uniprot_to_pdb_efficient(uniprot_id, uniprot_df, write = True):
         shutil.copy(pdb_path, uniprot_path)
     if write:
         write_chain_list(uniprot_path)
+    unzip_cif_folder(uniprot_path)
     return uniprot_path  
 
 
@@ -155,6 +132,7 @@ def get_domain_boundaries(json_file, scop_file):
     uniprot_scop_file["domain_end"] = uniprot_scop_file["domain_end"].astype(int)
     return uniprot_scop_file
 
+
 def get_residue_boundaries(json_file):
     sample = {x["id"] : {y["key"] : y["value"] for y in x["properties"]} for x in json_file["uniProtKBCrossReferences"] if x["database"] == "PDB"}
     domain_boundaries = {idx : item["Chains"].split("=")[-1] for idx, item in sample.items() if "Chains" in item.keys()}
@@ -163,6 +141,7 @@ def get_residue_boundaries(json_file):
     domain_boundaries["domain_start"] = domain_boundaries["domain_start"].astype(int)
     domain_boundaries["domain_end"] = domain_boundaries["domain_end"].astype(int)
     return domain_boundaries
+
 
 def get_domain_info_for_pdbs(json_file, scop_file):
     domain_boundaries = get_domain_boundaries(json_file, scop_file)
@@ -173,7 +152,7 @@ def get_domain_info_for_pdbs(json_file, scop_file):
         residue_boundaries["d_{}".format(x)] = ((residue_boundaries["domain_start"] <= min(dom_start)) & (residue_boundaries["domain_end"] >= max(dom_end)))
     return residue_boundaries
 
-def compare_proteins_domain(directory, domain_info):
+def compare_proteins_domain_efficient(directory, domain_info):
     list_of_domains = list(domain_info.columns[3:])
     unique_combos = domain_info.groupby(list_of_domains)
     i = 0
@@ -184,24 +163,9 @@ def compare_proteins_domain(directory, domain_info):
             clean_TMalign_output(directory, raw_file = "TMalign_raw_output_{}.txt".format(i), clean_file = "TMalign_output_{}.csv".format(i))
             i += 1
 
-def compare_proteins_domain_efficient(directory, domain_info):
-    unzip_cif_folder(directory)
-    list_of_domains = list(domain_info.columns[3:])
-    unique_combos = domain_info.groupby(list_of_domains)
-    i = 0
-    for _, group in unique_combos:
-        if len(group) > 1:
-            write_chain_list(directory, chain_list = [x.lower() + ".cif" for x in list(group.index)], filename = "chain_list_{}".format(i))
-            compare_proteins_dir(directory, chain_list = "chain_list_{}".format(i), output_file = "TMalign_raw_output_{}.txt".format(i))
-            clean_TMalign_output(directory, raw_file = "TMalign_raw_output_{}.txt".format(i), clean_file = "TMalign_output_{}.csv".format(i))
-            i += 1
 
 
 if __name__ == "__main__":
-    # Read Zipped status
-    zipped_status_path = "/nfs/turbo/lsa-tewaria/zipped_status.csv"
-    zipped_status = read_zipped_status(zipped_status_path)
-    
     # Load dataframe PDBs to Uniprot
     uniprot_pdb_path = "/nfs/turbo/lsa-tewaria/uniprot_df_small.csv"
     uniprot_df = pd.read_csv(uniprot_pdb_path)
@@ -210,7 +174,7 @@ if __name__ == "__main__":
     scop_df = read_scop_file()
 
     # Get Unique Uniprot IDs
-    uniprot_ids = uniprot_df["uniprot_id"].unique()
+    uniprot_ids = uniprot_df["uniprot_id"].unique()[0]
 
 
     
@@ -228,10 +192,10 @@ if __name__ == "__main__":
     ## This is how you do it the strategic way.
 
     # Find Uniprot data
-    uniprot_json = find_uniprot(uniprot_df, "CBPG_PSES6")
+    uniprot_json = find_uniprot(uniprot_df, "BIOD_MYCTU")
     domain_info = get_domain_info_for_pdbs(uniprot_json, scop_df)
-    uniprot_path, zipped_status = uniprot_to_pdb("CBPG_PSES6", uniprot_df, zipped_status)
-    compare_proteins_domain("/nfs/turbo/lsa-tewaria/uniprot/CBPG_PSES6", domain_info)
+    uniprot_path = uniprot_to_pdb_efficient("BIOD_MYCTU", uniprot_df)
+    compare_proteins_domain_efficient("/nfs/turbo/lsa-tewaria/uniprot/BIOD_MYCTU", domain_info)
     
 
     # # Move PDBs to Uniprot folders
