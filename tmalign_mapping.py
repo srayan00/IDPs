@@ -36,6 +36,7 @@ TODOS
 3) Then I want to compare the structures using TMScore 
 """
 
+# Parser
 parser = argparse.ArgumentParser()
 parser.add_argument('--uniprotID', default='BIOD_MYCTU', type=str,
                     help='Uniprot ID for protein you want to compare')
@@ -43,6 +44,15 @@ parser.add_argument('--naive', default= 0, type=int,
                     help='Naive approach or not')
 parser.add_argument("--testing_phase", default = 1, type = int,
                     help = "Testing phase or not")
+
+# Aligner
+aligner = Align.PairwiseAligner()
+aligner.mode = 'local'
+aligner.open_gap_score = -11
+aligner.extend_gap_score = -1
+aligner.substitution_matrix = Align.substitution_matrices.load("BLOSUM62")
+
+# Functions 
 
 def read_zipped_status(filepath = "/nfs/turbo/lsa-tewaria/zipped_status_efficient.csv", uniprot_ids = None):
     if not os.path.exists(filepath):
@@ -52,13 +62,6 @@ def read_zipped_status(filepath = "/nfs/turbo/lsa-tewaria/zipped_status_efficien
         zipped_status = pd.read_csv(filepath, index_col = 0)
     return zipped_status
 
-def initialize_aligner():
-    aligner = Align.PairwiseAligner()
-    aligner.mode = 'local' # does this need to be global?
-    aligner.open_gap_score = -11
-    aligner.extend_gap_score = -1
-    aligner.substitution_matrix = Align.substitution_matrices.load("BLOSUM62")
-    return aligner
 
 
 def read_scop_file(filepath = "/nfs/turbo/lsa-tewaria/scop-cla-latest.txt"):
@@ -138,7 +141,6 @@ def get_true_residue_boundaries(seq1, seq2, aligner):
 def split_pdb_structure(uniprot_id, json_file):
     uniprot_path = os.path.join("/nfs/turbo/lsa-tewaria/uniprot/", uniprot_id)
     main_seq = extract_sequence(json_file)
-    aligner = initialize_aligner()
     residue_boundaries = {"name" : [], "start" : [], "end" : []}
     for pdb_id in os.listdir(uniprot_path):
         if not pdb_id.endswith(".cif"):
