@@ -7,6 +7,7 @@ import shutil
 import json
 import re
 import argparse
+import requests
 import Bio.PDB as bpdb
 from Bio import Align
 
@@ -44,6 +45,8 @@ parser.add_argument('--naive', default= 0, type=int,
                     help='Naive approach or not')
 parser.add_argument("--testing_phase", default = 1, type = int,
                     help = "Testing phase or not")
+parser.add_argument("--playing", default = 1, type = int,
+                    help = "Playing around or not")
 
 # Aligner
 aligner = Align.PairwiseAligner()
@@ -137,6 +140,23 @@ def get_true_residue_boundaries(seq1, seq2, aligner):
     end_2 = alignment[0].aligned[1][0][1]
     return start_2, end_2
 
+def get_true_domain_boundaries(uniprot_id):
+    response = requests.get("https://www.ebi.ac.uk/interpro/api/entry/all/protein/reviewed/" + uniprot_id + "/")
+    if response.status_code == 200:
+        json_file = response.json()["results"]
+        domain_stuff = {x["metadata"]["accession"]: x for x in json_file if x["metadata"]["type"] == "domain"}
+        domain_boundaries = pd.Series({k: [(x["fragments"][0]["start"],x["fragments"][0]["end"]) 
+                                   for x in v["proteins"][0]["entry_protein_locations"]] for k, v in domain_stuff.items() 
+                                   if v["proteins"][0]["entry_protein_locations"] is not None})
+        domain_db = pd.Series({k: v["metadata"]["source_database"] for k, v in domain_stuff.items() if v["proteins"][0]["entry_protein_locations"] is not None}).reset_index().rename(columns = {"index" : "domain_id", 0 : "database"})
+        domain_boundaries = domain_boundaries.explode().reset_index().rename(columns = {"index" : "domain_id", 0 : "domain_start_end"})
+        domain_boundaries["domain_start"] = domain_boundaries["domain_start_end"].apply(lambda x: x[0])
+        domain_boundaries["domain_end"] = domain_boundaries["domain_start_end"].apply(lambda x: x[1])
+        domain_boundaries = domain_boundaries.join(domain_db.set_index("domain_id"), on = "domain_id").drop("domain_start_end", axis = 1)
+        return domain_boundaries
+    else:
+        print("Could not find domain boundaries for {}".format(uniprot_id))
+        return None
 
 def split_pdb_structure(uniprot_id, json_file):
     uniprot_path = os.path.join("/nfs/turbo/lsa-tewaria/uniprot/", uniprot_id)
@@ -191,10 +211,11 @@ def get_domain_boundaries(json_file, scop_file):
     uniprot_scop_file = scop_file[scop_file["FA-UNIID"] == uniprot_id][["FA-DOMID", "FA-UNIID", "FA-UNIREG"]]
     uniprot_scop_file["FA-UNIREG"] = uniprot_scop_file["FA-UNIREG"].str.split(",")
     uniprot_scop_file = uniprot_scop_file.explode("FA-UNIREG")
-    uniprot_scop_file[["domain_start", "domain_end"]] = uniprot_scop_file["FA-UNIREG"].str.split("-", expand = True)
-    uniprot_scop_file["domain_start"] = uniprot_scop_file["domain_start"].astype(int)
-    uniprot_scop_file["domain_end"] = uniprot_scop_file["domain_end"].astype(int)
-    return uniprot_scop_file
+    uniprot_scop_file[["domain_start", "domain_end"]] = uniprot_scop_file["FA-UNIREG"].str.split("-", expand = True).astype(int)
+    uniprot_scop_file = uniprot_scop_file.drop(["FA-UNIREG", "FA-UNIID"], axis = 1).rename(columns = {"FA-DOMID" : "domain_id"})
+    uniprot_scop_file["database"] = "SCOP"
+    other_domain_boundaries = get_true_domain_boundaries(uniprot_id)
+    return pd.concat([uniprot_scop_file, other_domain_boundaries]).reset_index(drop = True)
 
 
 def get_residue_boundaries(json_file):
@@ -212,9 +233,9 @@ def get_residue_boundaries(json_file):
 def get_domain_info_for_pdbs(json_file, scop_file):
     domain_boundaries = get_domain_boundaries(json_file, scop_file)
     residue_boundaries = get_residue_boundaries(json_file)
-    for x in domain_boundaries["FA-DOMID"].unique():
-        dom_start = domain_boundaries[domain_boundaries["FA-DOMID"] == x]["domain_start"].values
-        dom_end = domain_boundaries[domain_boundaries["FA-DOMID"] == x]["domain_end"].values
+    for x in domain_boundaries["domain_id"].unique():
+        dom_start = domain_boundaries[domain_boundaries["domain_id"] == x]["domain_start"].values
+        dom_end = domain_boundaries[domain_boundaries["domain_id"] == x]["domain_end"].values
         residue_boundaries["d_{}".format(x)] = ((residue_boundaries["domain_start"] <= min(dom_start)) & (residue_boundaries["domain_end"] >= max(dom_end)))
     return residue_boundaries
 
@@ -237,6 +258,7 @@ if __name__ == "__main__":
     uniprot_id = args.uniprotID
     naive = args.naive
     testing_phase = args.testing_phase
+    playing = args.playing
 
     # Load dataframe PDBs to Uniprot
     if testing_phase:
@@ -247,6 +269,15 @@ if __name__ == "__main__":
 
     # Load Scop data
     scop_df = read_scop_file()
+
+    if playing:
+        uniprot_json = find_uniprot(uniprot_df, uniprot_id)
+        other_u_id = uniprot_json["primaryAccession"]
+        domain_info = get_domain_boundaries(uniprot_json, scop_df)
+        # other_domain_info = get_true_domain_boundaries(other_u_id)
+        print(domain_info)
+        # print(other_domain_info)
+        exit()
 
     if uniprot_id == "all":
         # Get Unique Uniprot IDs
