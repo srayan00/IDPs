@@ -41,12 +41,14 @@ TODOS
 parser = argparse.ArgumentParser()
 parser.add_argument('--uniprotID', default='BIOD_MYCTU', type=str,
                     help='Uniprot ID for protein you want to compare')
-parser.add_argument('--naive', default= 1, type=int,
-                    help='Naive approach level:\n 0 - all proteins with the same uniprot id, \n 1 - all proteins containing the same domains,\n 2 - all proteins in the same sequence cluster')
+parser.add_argument('--clustering', default= 1, type=int,
+                    help='0 - all proteins with the same uniprot id, 1 - all proteins containing the same domains, 2 - all proteins in the same sequence cluster')
 parser.add_argument("--testing_phase", default = 1, type = int,
                     help = "Testing phase or not")
 parser.add_argument("--playing", default = 1, type = int,
                     help = "Playing around or not")
+parser.add_argument("--similarity_score", default = 1 , type = int,
+                    help = "0 - TM score, 1 - TM align")
 
 # Aligner
 aligner = Align.PairwiseAligner()
@@ -186,13 +188,17 @@ def split_pdb_structure(uniprot_id, json_file):
                 residue_boundaries["end"].append(end_main)
     return pd.DataFrame(residue_boundaries)
 
-def compare_two_proteins(directory, protein_1, protein_2):
+def TMalign_two_proteins(directory, protein_1, protein_2):
     terminal_command = "./TMalign " + directory + "/" + protein_1 + ".cif " + directory + "/" + protein_2 + ".cif"
     os.system(terminal_command)
 
 
-def compare_proteins_dir(directory, chain_list = "chain_list", output_file = "TMalign_output.txt"):
+def TMalign_dir(directory, chain_list = "chain_list", output_file = "TMalign_output.txt"):
     terminal_command = "./TMalign -dir " + directory + "/ " + directory + "/" + chain_list + " -outfmt 2 > " + directory + "/" + output_file
+    os.system(terminal_command)
+
+def TMscore_dir(directory, chain_list = "chain_list", output_file = "TMscore_output.txt"):
+    terminal_command = "./TMscore -seq -dir " + directory + "/ " + directory + "/" + chain_list + " -outfmt 2 > " + directory + "/" + output_file
     os.system(terminal_command)
 
 def clean_TMalign_output(directory, raw_file = "TMalign_raw_output.txt", clean_file = None):
@@ -205,6 +211,9 @@ def clean_TMalign_output(directory, raw_file = "TMalign_raw_output.txt", clean_f
         tmalign_output.to_csv(os.path.join(directory, uniprot_id + "_TMalign_output.csv"))
     else:
         tmalign_output.to_csv(os.path.join(directory, clean_file))
+
+def clean_TMscore_output(directory, raw_file = "TMscore_raw_output.txt", clean_file = None):
+    tmscore_output = pd.read_csv(os.path.join(directory, raw_file), sep = "\t", skipfooter = 1)
 
 def get_domain_boundaries(json_file, scop_file):
     uniprot_id = extract_uniprot_id(json_file)
@@ -249,7 +258,7 @@ def compare_proteins_domain(directory, domain_info):
         if len(group) > 1:
             print(list(group["name"]))
             write_chain_list(directory, chain_list = list(group["name"]), filename = "chain_list_{}".format(i))
-            compare_proteins_dir(directory, chain_list = "chain_list_{}".format(i), output_file = "TMalign_raw_output_{}.txt".format(i))
+            TMalign_dir(directory, chain_list = "chain_list_{}".format(i), output_file = "TMalign_raw_output_{}.txt".format(i))
             clean_TMalign_output(directory, raw_file = "TMalign_raw_output_{}.txt".format(i), clean_file = "TMalign_output_{}.csv".format(i))
             i += 1
 
@@ -260,7 +269,7 @@ def compare_proteins_seq_clusters(directory, domain_info, uniprot_json):
     for _, group in unique_combos:
         if len(group) > 1:
             write_chain_list(directory, chain_list = list(group["pdb"]), filename = "chain_listseq_{}".format(i))
-            compare_proteins_dir(directory, chain_list = "chain_listseq_{}".format(i), output_file = "TMalign_raw_outputseq_{}.txt".format(i))
+            TMalign_dir(directory, chain_list = "chain_listseq_{}".format(i), output_file = "TMalign_raw_outputseq_{}.txt".format(i))
             clean_TMalign_output(directory, raw_file = "TMalign_raw_outputseq_{}.txt".format(i), clean_file = "TMalign_outputseq_{}.csv".format(i))
             i += 1
 
@@ -271,9 +280,10 @@ if __name__ == "__main__":
 
     args, unknown = parser.parse_known_args()
     uniprot_id = args.uniprotID
-    naive = args.naive
+    clustering = args.clustering
     testing_phase = args.testing_phase
     playing = args.playing
+    similarity_score = args.similarity_score
 
     # Load dataframe PDBs to Uniprot
     if testing_phase:
@@ -290,10 +300,10 @@ if __name__ == "__main__":
         uniprot_path = uniprot_to_pdb(uniprot_id, uniprot_df)
         domain_info = get_domain_info_for_pdbs(uniprot_json, scop_df, uniprot_id)
         domain_info.to_csv(os.path.join(uniprot_path,"domain_info.csv"))
-        if naive == 1:
+        if clustering == 1:
             compare_proteins_domain(uniprot_path, domain_info)
-        elif naive == 0:
-            compare_proteins_dir(uniprot_path)
+        elif clustering == 0:
+            TMalign_dir(uniprot_path)
         else:
             compare_proteins_seq_clusters(uniprot_path, domain_info, uniprot_json)
         exit()
@@ -313,20 +323,20 @@ if __name__ == "__main__":
             domain_info = get_domain_info_for_pdbs(uniprot_json, scop_df)
 
             # Compare proteins in Uniprot folder
-            if naive == 1:
+            if clustering == 1:
                 compare_proteins_domain(uniprot_path, domain_info)
-            elif naive == 0:
-                compare_proteins_dir(uniprot_path)
+            elif clustering == 0:
+                TMalign_dir(uniprot_path)
             else:
                 compare_proteins_seq_clusters(uniprot_path, domain_info, uniprot_json)
     else:
         uniprot_json = find_uniprot(uniprot_df, uniprot_id)
         uniprot_path = uniprot_to_pdb(uniprot_id, uniprot_df)
         domain_info = get_domain_info_for_pdbs(uniprot_json, scop_df)
-        if naive == 1:
+        if clustering == 1:
             compare_proteins_domain(uniprot_path, domain_info)
-        elif naive == 0:
-            compare_proteins_dir(uniprot_path)
+        elif clustering == 0:
+            TMalign_dir(uniprot_path)
         else:
             compare_proteins_seq_clusters(uniprot_path, domain_info, uniprot_json)
 
