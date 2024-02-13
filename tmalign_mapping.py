@@ -41,8 +41,8 @@ TODOS
 parser = argparse.ArgumentParser()
 parser.add_argument('--uniprotID', default='BIOD_MYCTU', type=str,
                     help='Uniprot ID for protein you want to compare')
-parser.add_argument('--naive', default= 0, type=int,
-                    help='Naive approach or not')
+parser.add_argument('--naive', default= 1, type=int,
+                    help='Naive approach level:\n 0 - all proteins with the same uniprot id, \n 1 - all proteins containing the same domains,\n 2 - all proteins in the same sequence cluster')
 parser.add_argument("--testing_phase", default = 1, type = int,
                     help = "Testing phase or not")
 parser.add_argument("--playing", default = 1, type = int,
@@ -64,8 +64,6 @@ def read_zipped_status(filepath = "/nfs/turbo/lsa-tewaria/zipped_status_efficien
     else:
         zipped_status = pd.read_csv(filepath, index_col = 0)
     return zipped_status
-
-
 
 def read_scop_file(filepath = "/nfs/turbo/lsa-tewaria/scop-cla-latest.txt"):
     scop_df = pd.read_csv(filepath, sep = " ", skiprows = 5)
@@ -91,6 +89,9 @@ def find_uniprot(df, uniprot_id):
 
 def extract_sequence(json_file):
     return json_file["sequence"]["value"]
+
+def extract_uniprot_id(json_file):
+    return json_file["primaryAccession"]
 
 def unzip_cif_folder(directory):
     for filename in os.listdir(directory):
@@ -129,18 +130,13 @@ def uniprot_to_pdb(uniprot_id, uniprot_df, write = True):
     unzip_cif_folder(uniprot_path)
     return uniprot_path  
 
-def get_true_residue_boundaries(seq1, seq2, aligner):
+def get_true_residue_boundaries(seq1, seq2):
     alignment = aligner.align(seq1, seq2)
-    start_1 = alignment[0].aligned[0][0][0]
-    end_1 = alignment[0].aligned[0][0][1]
-    if start_1 > 0:
-        print(start_1, end_1)
-        return -1, -1
-    start_2 = alignment[0].aligned[1][0][0]
-    end_2 = alignment[0].aligned[1][0][1]
-    return start_2, end_2
+    start_1, end_1 = alignment[0].aligned[0][0][0], alignment[0].aligned[0][0][1]
+    start_2, end_2 = alignment[0].aligned[1][0][0], alignment[0].aligned[1][0][1]
+    return start_1, end_1, start_2, end_2
 
-def get_true_domain_boundaries(uniprot_id):
+def get_interpro_domain_boundaries(uniprot_id):
     response = requests.get("https://www.ebi.ac.uk/interpro/api/entry/all/protein/reviewed/" + uniprot_id + "/")
     if response.status_code == 200:
         json_file = response.json()["results"]
@@ -158,6 +154,12 @@ def get_true_domain_boundaries(uniprot_id):
         print("Could not find domain boundaries for {}".format(uniprot_id))
         return None
 
+def remove_unwanted_residues(chain, start, end):
+    ids_to_remove = [res.get_id() for i, res in enumerate(chain) if i < start or i > end]
+    for res_id in ids_to_remove:
+        chain.detach_child(res_id)
+    return chain
+
 def split_pdb_structure(uniprot_id, json_file):
     uniprot_path = os.path.join("/nfs/turbo/lsa-tewaria/uniprot/", uniprot_id)
     main_seq = extract_sequence(json_file)
@@ -170,20 +172,18 @@ def split_pdb_structure(uniprot_id, json_file):
         for model in pdb:
             polypeptides = bpdb.PPBuilder().build_peptides(model)
             for chain, pp in zip(model, polypeptides):
-                model_id = str(model.get_id())
-                chain_id = str(chain.get_id())
+                model_id, chain_id = str(model.get_id()), str(chain.get_id())
                 name_of_chain = pdb_id[:-4] + "_"+ model_id + chain_id
                 chain_path = os.path.join(uniprot_path, name_of_chain + ".pdb")
-                start, end = get_true_residue_boundaries(pp.get_sequence(), main_seq, aligner)
-                if start != -1:
-                    io = bpdb.PDBIO()
-                    io.set_structure(chain)
-                    io.save(chain_path)
-                    residue_boundaries["name"].append(name_of_chain)
-                    residue_boundaries["start"].append(start)
-                    residue_boundaries["end"].append(end)
-                else:
-                    print("Could not align {} and {}".format(name_of_chain, uniprot_id))
+                start_pdb, end_pdb, start_main, end_main = get_true_residue_boundaries(pp.get_sequence(), main_seq)
+                # if start_1 > 0:
+                chain = remove_unwanted_residues(chain, start_pdb, end_pdb)
+                io = bpdb.PDBIO()
+                io.set_structure(chain)
+                io.save(chain_path)
+                residue_boundaries["name"].append(name_of_chain + ".pdb")
+                residue_boundaries["start"].append(start_main)
+                residue_boundaries["end"].append(end_main)
     return pd.DataFrame(residue_boundaries)
 
 def compare_two_proteins(directory, protein_1, protein_2):
@@ -207,37 +207,39 @@ def clean_TMalign_output(directory, raw_file = "TMalign_raw_output.txt", clean_f
         tmalign_output.to_csv(os.path.join(directory, clean_file))
 
 def get_domain_boundaries(json_file, scop_file):
-    uniprot_id = json_file["primaryAccession"]
+    uniprot_id = extract_uniprot_id(json_file)
     uniprot_scop_file = scop_file[scop_file["FA-UNIID"] == uniprot_id][["FA-DOMID", "FA-UNIID", "FA-UNIREG"]]
     uniprot_scop_file["FA-UNIREG"] = uniprot_scop_file["FA-UNIREG"].str.split(",")
     uniprot_scop_file = uniprot_scop_file.explode("FA-UNIREG")
     uniprot_scop_file[["domain_start", "domain_end"]] = uniprot_scop_file["FA-UNIREG"].str.split("-", expand = True).astype(int)
     uniprot_scop_file = uniprot_scop_file.drop(["FA-UNIREG", "FA-UNIID"], axis = 1).rename(columns = {"FA-DOMID" : "domain_id"})
     uniprot_scop_file["database"] = "SCOP"
-    other_domain_boundaries = get_true_domain_boundaries(uniprot_id)
+    other_domain_boundaries = get_interpro_domain_boundaries(uniprot_id)
     return pd.concat([uniprot_scop_file, other_domain_boundaries]).reset_index(drop = True)
 
 
-def get_residue_boundaries(json_file):
-    sample = {x["id"] : {y["key"] : y["value"] for y in x["properties"]} for x in json_file["uniProtKBCrossReferences"] if x["database"] == "PDB"}
-    domain_boundaries = {idx : item["Chains"].split("=")[-1] for idx, item in sample.items() if "Chains" in item.keys()}
-    domain_boundaries = pd.DataFrame.from_dict(domain_boundaries, orient = "index", columns = ["Domain_Boundaries"])
-    domain_boundaries[["domain_start", "domain_end"]] = domain_boundaries["Domain_Boundaries"].str.split("-", expand = True)
-    domain_boundaries["domain_start"] = domain_boundaries["domain_start"].astype(int)
-    domain_boundaries["domain_end"] = domain_boundaries["domain_end"].astype(int)
-    return domain_boundaries
-
-
-
-
-def get_domain_info_for_pdbs(json_file, scop_file):
+def get_domain_info_for_pdbs(json_file, scop_file, uniprot_id):
     domain_boundaries = get_domain_boundaries(json_file, scop_file)
-    residue_boundaries = get_residue_boundaries(json_file)
+    residue_boundaries = split_pdb_structure(uniprot_id, json_file)
     for x in domain_boundaries["domain_id"].unique():
         dom_start = domain_boundaries[domain_boundaries["domain_id"] == x]["domain_start"].values
         dom_end = domain_boundaries[domain_boundaries["domain_id"] == x]["domain_end"].values
-        residue_boundaries["d_{}".format(x)] = ((residue_boundaries["domain_start"] <= min(dom_start)) & (residue_boundaries["domain_end"] >= max(dom_end)))
+        residue_boundaries["d_{}".format(x)] = ((residue_boundaries["start"] <= min(dom_start)) & (residue_boundaries["end"] >= max(dom_end)))
     return residue_boundaries
+
+def get_sequence_clusters(directory, domain_info, uniprot_json):
+    fasta_path = os.path.join(directory, "fasta_file.fasta")
+    main_sequence = extract_sequence(uniprot_json)
+    with open(fasta_path, "w") as f:
+        for x in range(len(domain_info["name"])):
+            start = domain_info.iloc[x]["start"]
+            end = domain_info.iloc[x]["end"]
+            f.write(f">{domain_info.iloc[x]['name']}\n")
+            f.write(main_sequence[start:end] + "\n")
+    terminal_command = "mmseqs easy-cluster " + fasta_path + " " + os.path.join(directory, "clusterRes") + " tmp --min-seq-id 0.8 -c 0.8 --cov-mode 1"
+    os.system(terminal_command)
+    cluster_put = pd.read_csv(os.path.join(directory, "clusterRes_cluster.tsv"), sep="\t", header=None, names=["cluster", "pdb"])
+    return cluster_put
 
 def compare_proteins_domain(directory, domain_info):
     list_of_domains = list(domain_info.columns[3:])
@@ -245,10 +247,23 @@ def compare_proteins_domain(directory, domain_info):
     i = 0
     for _, group in unique_combos:
         if len(group) > 1:
-            write_chain_list(directory, chain_list = [x.lower() + ".cif" for x in list(group.index)], filename = "chain_list_{}".format(i))
+            print(list(group["name"]))
+            write_chain_list(directory, chain_list = list(group["name"]), filename = "chain_list_{}".format(i))
             compare_proteins_dir(directory, chain_list = "chain_list_{}".format(i), output_file = "TMalign_raw_output_{}.txt".format(i))
             clean_TMalign_output(directory, raw_file = "TMalign_raw_output_{}.txt".format(i), clean_file = "TMalign_output_{}.csv".format(i))
             i += 1
+
+def compare_proteins_seq_clusters(directory, domain_info, uniprot_json):
+    seq_clusters = get_sequence_clusters(directory, domain_info, uniprot_json)
+    unique_combos = seq_clusters.groupby("cluster")
+    i = 0
+    for _, group in unique_combos:
+        if len(group) > 1:
+            write_chain_list(directory, chain_list = list(group["pdb"]), filename = "chain_listseq_{}".format(i))
+            compare_proteins_dir(directory, chain_list = "chain_listseq_{}".format(i), output_file = "TMalign_raw_outputseq_{}.txt".format(i))
+            clean_TMalign_output(directory, raw_file = "TMalign_raw_outputseq_{}.txt".format(i), clean_file = "TMalign_outputseq_{}.csv".format(i))
+            i += 1
+
 
 
 
@@ -272,11 +287,15 @@ if __name__ == "__main__":
 
     if playing:
         uniprot_json = find_uniprot(uniprot_df, uniprot_id)
-        other_u_id = uniprot_json["primaryAccession"]
-        domain_info = get_domain_boundaries(uniprot_json, scop_df)
-        # other_domain_info = get_true_domain_boundaries(other_u_id)
-        print(domain_info)
-        # print(other_domain_info)
+        uniprot_path = uniprot_to_pdb(uniprot_id, uniprot_df)
+        domain_info = get_domain_info_for_pdbs(uniprot_json, scop_df, uniprot_id)
+        domain_info.to_csv(os.path.join(uniprot_path,"domain_info.csv"))
+        if naive == 1:
+            compare_proteins_domain(uniprot_path, domain_info)
+        elif naive == 0:
+            compare_proteins_dir(uniprot_path)
+        else:
+            compare_proteins_seq_clusters(uniprot_path, domain_info, uniprot_json)
         exit()
 
     if uniprot_id == "all":
@@ -287,27 +306,27 @@ if __name__ == "__main__":
             # Find Uniprot data
             uniprot_json = find_uniprot(uniprot_df, uniprot_id)
 
-            # Get the domain info for the proteins
-            domain_info = get_domain_info_for_pdbs(uniprot_json, scop_df)
-
             # Move zipped cif files from pdb to uniprot folder
             uniprot_path = uniprot_to_pdb(uniprot_id, uniprot_df)
 
+             # Get the domain info for the proteins
+            domain_info = get_domain_info_for_pdbs(uniprot_json, scop_df)
+
             # Compare proteins in Uniprot folder
-            if not naive:
+            if naive == 1:
                 compare_proteins_domain(uniprot_path, domain_info)
-            else:
+            elif naive == 0:
                 compare_proteins_dir(uniprot_path)
+            else:
+                compare_proteins_seq_clusters(uniprot_path, domain_info, uniprot_json)
     else:
         uniprot_json = find_uniprot(uniprot_df, uniprot_id)
-        domain_info = get_domain_info_for_pdbs(uniprot_json, scop_df)
         uniprot_path = uniprot_to_pdb(uniprot_id, uniprot_df)
-
-        # Split the pdb structure by (entity, chain)
-        residue_bounds = split_pdb_structure(uniprot_id, uniprot_json)
-        print(residue_bounds)
-        if not naive:
+        domain_info = get_domain_info_for_pdbs(uniprot_json, scop_df)
+        if naive == 1:
             compare_proteins_domain(uniprot_path, domain_info)
-        else:
+        elif naive == 0:
             compare_proteins_dir(uniprot_path)
+        else:
+            compare_proteins_seq_clusters(uniprot_path, domain_info, uniprot_json)
 
