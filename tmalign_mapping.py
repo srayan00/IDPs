@@ -27,6 +27,7 @@ residue boundaries. We can check the domain stuff here too using Scop?? (trying 
     -> And then do tmalign
 
 ENLYS_BPT4 has been the example protein so far. 
+PLBL2_MOUSE is another example protein
 """
 
 """
@@ -201,16 +202,19 @@ def TMscore_dir(directory, chain_list = "chain_list", output_file = "TMscore_out
     terminal_command = "./TMscore -seq -dir " + directory + "/ " + directory + "/" + chain_list + " -outfmt 2 > " + directory + "/" + output_file
     os.system(terminal_command)
 
-def clean_TMalign_output(directory, raw_file = "TMalign_raw_output.txt", clean_file = None):
+def clean_TMalign_output(directory, cluster_name, raw_file = "TMalign_raw_output.txt", clean_file = None):
     tmalign_output = pd.read_csv(os.path.join(directory, raw_file), sep = "\t", skipfooter = 1)
-    tmalign_output["Chain_1"] = tmalign_output["#PDBchain1"].apply(lambda x: x.split("/")[-1].split(".")[0])
-    tmalign_output["Chain_2"] = tmalign_output["PDBchain2"].apply(lambda x: x.split("/")[-1].split(".")[0])
+    tmalign_output = tmalign_output.rename(columns = {"#PDBchain1" : "PDBchain1"})
+    tmalign_output["PDBchain1"] = tmalign_output["PDBchain1"].apply(lambda x: x.split("/")[-1].split(".")[0])
+    tmalign_output["PDBchain2"] = tmalign_output["PDBchain2"].apply(lambda x: x.split("/")[-1].split(".")[0])
     uniprot_id = directory.split("/")[-1]
     tmalign_output["Uniprot_ID"] = uniprot_id
-    if clean_file is None:
-        tmalign_output.to_csv(os.path.join(directory, uniprot_id + "_TMalign_output.csv"))
-    else:
-        tmalign_output.to_csv(os.path.join(directory, clean_file))
+    tmalign_output["Cluster"] = cluster_name
+    # if clean_file is None:
+    #     tmalign_output.to_csv(os.path.join(directory, uniprot_id + "_TMalign_output.csv"))
+    # else:
+    #     tmalign_output.to_csv(os.path.join(directory, clean_file))
+    return tmalign_output
 
 def clean_TMscore_output(directory, raw_file = "TMscore_raw_output.txt", clean_file = None):
     tmscore_output = pd.read_csv(os.path.join(directory, raw_file), sep = "\t", skipfooter = 1)
@@ -254,24 +258,37 @@ def compare_proteins_domain(directory, domain_info):
     list_of_domains = list(domain_info.columns[3:])
     unique_combos = domain_info.groupby(list_of_domains)
     i = 0
-    for _, group in unique_combos:
+    for j, group in unique_combos:
         if len(group) > 1:
-            print(list(group["name"]))
+            print(list(j))
+            cluster_name = "dom_" + domain_info.columns[3:][list(j)]
+            print(cluster_name)
             write_chain_list(directory, chain_list = list(group["name"]), filename = "chain_list_{}".format(i))
             TMalign_dir(directory, chain_list = "chain_list_{}".format(i), output_file = "TMalign_raw_output_{}.txt".format(i))
-            clean_TMalign_output(directory, raw_file = "TMalign_raw_output_{}.txt".format(i), clean_file = "TMalign_output_{}.csv".format(i))
+            tmalign_output = clean_TMalign_output(directory, cluster_name= "dom" + str(j),raw_file = "TMalign_raw_output_{}.txt".format(i), clean_file = "TMalign_output_{}.csv".format(i))
+            if i == 0:
+                final_output = tmalign_output
+            else:
+                final_output = pd.concat([final_output, tmalign_output])
             i += 1
+    return final_output
 
 def compare_proteins_seq_clusters(directory, domain_info, uniprot_json):
     seq_clusters = get_sequence_clusters(directory, domain_info, uniprot_json)
     unique_combos = seq_clusters.groupby("cluster")
     i = 0
-    for _, group in unique_combos:
+    for j, group in unique_combos:
         if len(group) > 1:
+            cluster_name = "seq_" + domain_info[domain_info["name"] == j]["start"].values[0] + "_" + domain_info[domain_info["name"] == j]["end"].values[0]
             write_chain_list(directory, chain_list = list(group["pdb"]), filename = "chain_listseq_{}".format(i))
             TMalign_dir(directory, chain_list = "chain_listseq_{}".format(i), output_file = "TMalign_raw_outputseq_{}.txt".format(i))
-            clean_TMalign_output(directory, raw_file = "TMalign_raw_outputseq_{}.txt".format(i), clean_file = "TMalign_outputseq_{}.csv".format(i))
+            tmalign_output = clean_TMalign_output(directory, cluster_name = cluster_name, raw_file = "TMalign_raw_outputseq_{}.txt".format(i), clean_file = "TMalign_outputseq_{}.csv".format(i))
+            if i == 0:
+                final_output = tmalign_output
+            else:
+                final_output = pd.concat([final_output, tmalign_output])
             i += 1
+    return final_output
 
 
 
@@ -301,11 +318,12 @@ if __name__ == "__main__":
         domain_info = get_domain_info_for_pdbs(uniprot_json, scop_df, uniprot_id)
         domain_info.to_csv(os.path.join(uniprot_path,"domain_info.csv"))
         if clustering == 1:
-            compare_proteins_domain(uniprot_path, domain_info)
+            tm_output = compare_proteins_domain(uniprot_path, domain_info)
         elif clustering == 0:
             TMalign_dir(uniprot_path)
         else:
-            compare_proteins_seq_clusters(uniprot_path, domain_info, uniprot_json)
+            tm_output = compare_proteins_seq_clusters(uniprot_path, domain_info, uniprot_json)
+        print(tm_output)
         exit()
 
     if uniprot_id == "all":
@@ -324,19 +342,19 @@ if __name__ == "__main__":
 
             # Compare proteins in Uniprot folder
             if clustering == 1:
-                compare_proteins_domain(uniprot_path, domain_info)
+                tm_output = compare_proteins_domain(uniprot_path, domain_info)
             elif clustering == 0:
                 TMalign_dir(uniprot_path)
             else:
-                compare_proteins_seq_clusters(uniprot_path, domain_info, uniprot_json)
+                tm_output = compare_proteins_seq_clusters(uniprot_path, domain_info, uniprot_json)
     else:
         uniprot_json = find_uniprot(uniprot_df, uniprot_id)
         uniprot_path = uniprot_to_pdb(uniprot_id, uniprot_df)
         domain_info = get_domain_info_for_pdbs(uniprot_json, scop_df)
         if clustering == 1:
-            compare_proteins_domain(uniprot_path, domain_info)
+            tm_output = compare_proteins_domain(uniprot_path, domain_info)
         elif clustering == 0:
             TMalign_dir(uniprot_path)
         else:
-            compare_proteins_seq_clusters(uniprot_path, domain_info, uniprot_json)
+            tm_output = compare_proteins_seq_clusters(uniprot_path, domain_info, uniprot_json)
 
